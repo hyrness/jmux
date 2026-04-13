@@ -165,7 +165,7 @@ export class InputRouter {
           this.opts.onHover({ area: "sidebar", row: mouse.y - 1 });
         } else if (!this.modalOpen) {
           if (mouse.y === 1) {
-            this.opts.onHover({ area: "toolbar", col: mouse.x - this.opts.sidebarCols - 1 });
+            this.opts.onHover({ area: "toolbar", col: mouse.x - this.opts.sidebarCols - 2 });
           } else {
             this.opts.onHover(null);
           }
@@ -196,7 +196,7 @@ export class InputRouter {
 
       // Toolbar click — row 1 in main area
       if (mouse.y === 1 && !mouse.release && !isMotion && !isWheel) {
-        const mainCol = mouse.x - this.opts.sidebarCols - 1; // 0-indexed in main area
+        const mainCol = mouse.x - this.opts.sidebarCols - 2; // relative to main area start (after sidebar + border)
         this.opts.onToolbarClick?.(mainCol);
         return;
       }
