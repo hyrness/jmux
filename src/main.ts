@@ -345,12 +345,43 @@ const lastViewedTimestamps = new Map<string, number>();
 const sessionDetailsCache = new Map<string, { directory?: string; gitBranch?: string; project?: string }>();
 
 let cacheTimerInterval: ReturnType<typeof setInterval> | null = null;
+const cacheKeepaliveSent = new Set<string>(); // session names that have been sent a keepalive in current countdown
+const CACHE_TIMER_TTL = 300; // seconds (must match sidebar.ts)
+const CACHE_KEEPALIVE_THRESHOLD = 60; // send keepalive when this many seconds remain
+
+async function sendCacheKeepalive(sessionName: string): Promise<void> {
+  try {
+    const lines = await control.sendCommand(
+      `list-panes -s -t ${tq(sessionName)} -F '#{pane_id} #{pane_current_command}'`,
+    );
+    for (const line of lines) {
+      const spaceIdx = line.indexOf(" ");
+      if (spaceIdx === -1) continue;
+      const paneId = line.slice(0, spaceIdx);
+      const cmd = line.slice(spaceIdx + 1).trim();
+      if (cmd.toLowerCase().includes("claude")) {
+        await control.sendCommand(`send-keys -t ${paneId} Enter`);
+      }
+    }
+  } catch {
+    // Best-effort; ignore errors
+  }
+}
 
 function startCacheTimerTick(): void {
   if (cacheTimerInterval) return;
   cacheTimerInterval = setInterval(() => {
-    if (cacheTimersEnabled && otelReceiver.getActiveSessionIds().length > 0) {
-      scheduleRender();
+    if (!cacheTimersEnabled || otelReceiver.getActiveSessionIds().length === 0) return;
+    scheduleRender();
+    for (const sessionName of otelReceiver.getActiveSessionIds()) {
+      const state = otelReceiver.getTimerState(sessionName);
+      if (!state) continue;
+      const elapsed = Math.floor((Date.now() - state.lastRequestTime) / 1000);
+      const remaining = CACHE_TIMER_TTL - elapsed;
+      if (remaining > 0 && remaining <= CACHE_KEEPALIVE_THRESHOLD && !cacheKeepaliveSent.has(sessionName)) {
+        cacheKeepaliveSent.add(sessionName);
+        sendCacheKeepalive(sessionName).catch(() => {});
+      }
     }
   }, 1000);
 }
@@ -368,6 +399,7 @@ otelReceiver.onUpdate = (sessionName) => {
   if (!session) return;
   const state = otelReceiver.getTimerState(sessionName);
   sidebar.setCacheTimer(session.id, state);
+  cacheKeepaliveSent.delete(sessionName); // reset so next countdown can trigger again
   startCacheTimerTick();
   scheduleRender();
 };
