@@ -22,7 +22,7 @@ import { TmuxControl, type ControlEvent } from "./tmux-control";
 import { DiffPanel } from "./diff-panel";
 import type { SessionInfo, WindowTab, PaletteCommand, PaletteResult } from "./types";
 import { loadProjectDirsCache, saveProjectDirsCache } from "./project-dirs-cache";
-import { loadUserConfig } from "./config";
+import { loadUserConfig, parsePrefixKey } from "./config";
 import { OtelReceiver } from "./otel-receiver";
 import { resolve, dirname } from "path";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
@@ -172,6 +172,7 @@ let cacheTimersEnabled = (userConfig.cacheTimers as boolean) !== false;
 let pinnedSessions = new Set<string>((userConfig.pinnedSessions as string[]) ?? []);
 let diffPanelSplitRatio = (userConfig.diffPanel as any)?.splitRatio ?? 0.4;
 let hunkCommand = (userConfig.diffPanel as any)?.hunkCommand ?? "hunk";
+let prefixByte = parsePrefixKey(userConfig.prefixKey ?? "C-a");
 
 // Resolve paths relative to source
 const jmuxDir = resolve(dirname(import.meta.dir));
@@ -345,12 +346,43 @@ const lastViewedTimestamps = new Map<string, number>();
 const sessionDetailsCache = new Map<string, { directory?: string; gitBranch?: string; project?: string }>();
 
 let cacheTimerInterval: ReturnType<typeof setInterval> | null = null;
+const cacheKeepaliveSent = new Set<string>(); // session names that have been sent a keepalive in current countdown
+const CACHE_TIMER_TTL = 300; // seconds (must match sidebar.ts)
+const CACHE_KEEPALIVE_THRESHOLD = 60; // send keepalive when this many seconds remain
+
+async function sendCacheKeepalive(sessionName: string): Promise<void> {
+  try {
+    const lines = await control.sendCommand(
+      `list-panes -s -t ${tq(sessionName)} -F '#{pane_id} #{pane_current_command}'`,
+    );
+    for (const line of lines) {
+      const spaceIdx = line.indexOf(" ");
+      if (spaceIdx === -1) continue;
+      const paneId = line.slice(0, spaceIdx);
+      const cmd = line.slice(spaceIdx + 1).trim();
+      if (cmd.toLowerCase().includes("claude")) {
+        await control.sendCommand(`send-keys -t ${paneId} Enter`);
+      }
+    }
+  } catch {
+    // Best-effort; ignore errors
+  }
+}
 
 function startCacheTimerTick(): void {
   if (cacheTimerInterval) return;
   cacheTimerInterval = setInterval(() => {
-    if (cacheTimersEnabled && otelReceiver.getActiveSessionIds().length > 0) {
-      scheduleRender();
+    if (!cacheTimersEnabled || otelReceiver.getActiveSessionIds().length === 0) return;
+    scheduleRender();
+    for (const sessionName of otelReceiver.getActiveSessionIds()) {
+      const state = otelReceiver.getTimerState(sessionName);
+      if (!state) continue;
+      const elapsed = Math.floor((Date.now() - state.lastRequestTime) / 1000);
+      const remaining = CACHE_TIMER_TTL - elapsed;
+      if (remaining > 0 && remaining <= CACHE_KEEPALIVE_THRESHOLD && !cacheKeepaliveSent.has(sessionName)) {
+        cacheKeepaliveSent.add(sessionName);
+        sendCacheKeepalive(sessionName).catch(() => {});
+      }
     }
   }, 1000);
 }
@@ -368,6 +400,7 @@ otelReceiver.onUpdate = (sessionName) => {
   if (!session) return;
   const state = otelReceiver.getTimerState(sessionName);
   sidebar.setCacheTimer(session.id, state);
+  cacheKeepaliveSent.delete(sessionName); // reset so next countdown can trigger again
   startCacheTimerTick();
   scheduleRender();
 };
@@ -707,6 +740,7 @@ function clearSessionIndicators(): void {
 const inputRouter = new InputRouter(
   {
     sidebarCols: sidebarWidth,
+    prefixByte,
     onPtyData: (data) => {
       pty.write(data);
       clearSessionIndicators();
@@ -1584,6 +1618,12 @@ try {
       pinnedSessions = newPinned;
       sidebar.setPinnedSessions(pinnedSessions);
       scheduleRender();
+    }
+
+    const newPrefixByte = parsePrefixKey(updated.prefixKey ?? "C-a");
+    if (newPrefixByte !== prefixByte) {
+      prefixByte = newPrefixByte;
+      inputRouter.setPrefixByte(newPrefixByte);
     }
 
     const needsResize = newWidth !== sidebarWidth;
