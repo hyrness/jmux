@@ -22,7 +22,7 @@ import { TmuxControl, type ControlEvent } from "./tmux-control";
 import { DiffPanel } from "./diff-panel";
 import type { SessionInfo, WindowTab, PaletteCommand, PaletteResult } from "./types";
 import { loadProjectDirsCache, saveProjectDirsCache } from "./project-dirs-cache";
-import { loadUserConfig } from "./config";
+import { loadUserConfig, parsePrefixKey } from "./config";
 import { OtelReceiver } from "./otel-receiver";
 import { resolve, dirname } from "path";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
@@ -172,6 +172,7 @@ let cacheTimersEnabled = (userConfig.cacheTimers as boolean) !== false;
 let pinnedSessions = new Set<string>((userConfig.pinnedSessions as string[]) ?? []);
 let diffPanelSplitRatio = (userConfig.diffPanel as any)?.splitRatio ?? 0.4;
 let hunkCommand = (userConfig.diffPanel as any)?.hunkCommand ?? "hunk";
+let prefixByte = parsePrefixKey(userConfig.prefixKey ?? "C-a");
 
 // Resolve paths relative to source
 const jmuxDir = resolve(dirname(import.meta.dir));
@@ -707,6 +708,7 @@ function clearSessionIndicators(): void {
 const inputRouter = new InputRouter(
   {
     sidebarCols: sidebarWidth,
+    prefixByte,
     onPtyData: (data) => {
       pty.write(data);
       clearSessionIndicators();
@@ -1584,6 +1586,12 @@ try {
       pinnedSessions = newPinned;
       sidebar.setPinnedSessions(pinnedSessions);
       scheduleRender();
+    }
+
+    const newPrefixByte = parsePrefixKey(updated.prefixKey ?? "C-a");
+    if (newPrefixByte !== prefixByte) {
+      prefixByte = newPrefixByte;
+      inputRouter.setPrefixByte(newPrefixByte);
     }
 
     const needsResize = newWidth !== sidebarWidth;

@@ -7,10 +7,23 @@ export interface JmuxConfig {
   claudeCommand?: string;
   cacheTimers?: boolean;
   pinnedSessions?: string[];
+  prefixKey?: string;
   diffPanel?: {
     splitRatio?: number;
     hunkCommand?: string;
   };
+}
+
+/**
+ * Parse a prefix key string like "C-a" or "C-j" into the raw byte the terminal sends.
+ * Returns "\x01" (Ctrl-A) for unrecognized input.
+ */
+export function parsePrefixKey(key: string): string {
+  const m = key.match(/^[Cc]-([a-z])$/);
+  if (m) {
+    return String.fromCharCode(m[1].charCodeAt(0) - 96);
+  }
+  return "\x01";
 }
 
 /**

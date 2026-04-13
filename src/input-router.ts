@@ -31,6 +31,7 @@ export function translateMouseX(
 
 export interface InputRouterOptions {
   sidebarCols: number;
+  prefixByte?: string;
   onPtyData: (data: string) => void;
   onSidebarClick: (row: number) => void;
   onSidebarScroll?: (delta: number) => void;
@@ -62,6 +63,10 @@ export class InputRouter {
   constructor(opts: InputRouterOptions, sidebarVisible: boolean) {
     this.opts = opts;
     this.sidebarVisible = sidebarVisible;
+  }
+
+  setPrefixByte(byte: string): void {
+    this.opts.prefixByte = byte;
   }
 
   setSidebarVisible(visible: boolean): void {
@@ -106,9 +111,11 @@ export class InputRouter {
       }
     }
 
-    // Ctrl-a p interception: detect prefix + p to toggle palette
-    // Ctrl-a is forwarded to tmux (so other prefix bindings work),
-    // but if next byte is "p" we intercept it before tmux sees it.
+    // Prefix key interception: detect prefix + p/n/i/g/etc to handle jmux actions.
+    // Prefix is forwarded to tmux (so other prefix bindings work),
+    // but if next byte is one of the jmux shortcuts we intercept it before tmux sees it.
+    // The prefix byte is configured via prefixKey in ~/.config/jmux/config.json (default: C-a).
+    const prefixByte = this.opts.prefixByte ?? "\x01";
     if (!this.modalOpen) {
       if (this.prefixSeen) {
         this.prefixSeen = false;
@@ -142,7 +149,7 @@ export class InputRouter {
           return;
         }
         // Not intercepted — forward to PTY normally (tmux handles its prefix binding)
-      } else if (data === "\x01") {
+      } else if (data === prefixByte) {
         this.prefixSeen = true;
         this.prefixTimer = setTimeout(() => { this.prefixSeen = false; this.prefixTimer = null; }, 2000);
         // Only forward Ctrl-a to PTY when tmux is focused (not when diff panel is focused)
