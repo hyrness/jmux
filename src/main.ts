@@ -27,6 +27,7 @@ import { OtelReceiver } from "./otel-receiver";
 import { resolve, dirname } from "path";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { homedir } from "os";
+import { StringDecoder } from "string_decoder";
 
 // --- CLI commands (run and exit before TUI) ---
 
@@ -1502,8 +1503,11 @@ pty.onData((data: string) => {
 
 // --- Stdin ---
 
+// StringDecoder buffers incomplete multi-byte UTF-8 sequences across chunks,
+// preventing garbled characters when pasted text is split at a chunk boundary.
+const stdinDecoder = new StringDecoder("utf8");
 process.stdin.on("data", (data: Buffer) => {
-  inputRouter.handleInput(data.toString());
+  inputRouter.handleInput(stdinDecoder.write(data));
 });
 
 // --- Resize ---
